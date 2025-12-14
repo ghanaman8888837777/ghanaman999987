@@ -12,12 +12,9 @@ from calendar import monthrange
 load_dotenv()
 
 # --- Logging Configuration ---
-# Ensure logging is configured for consistent output in the container logs
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- CRITICAL IMPORTS FOR DATABASE ACCESS (FIXED) ---
-# We only import the Flask app instance (app) and the database objects (db, VisaAccount).
-# The failing function 'setup_database_connection' has been removed.
 from app import app
 from models import db, VisaAccount 
 # --- END CRITICAL IMPORTS ---
@@ -27,10 +24,6 @@ MONDAY = 0
 WEDNESDAY = 2
 
 # CRITICAL FIX: The entire outdated context block is removed.
-# Database connection and setup is now handled exclusively by Flask-SQLAlchemy 
-# initialized in app.py, and accessed via 'with app.app_context():' in run_async.
-# with app.app_context():
-#     setup_database_connection(app) 
 
 class VisaSlotListener:
     """
@@ -43,8 +36,8 @@ class VisaSlotListener:
         self,
         telegram_token: str,
         telegram_chat_id: int,
-        # CRITICAL FIX: Set default poll interval to 5 minutes (300s)
-        poll_interval_seconds: int = 60, 
+        # TIMING CHANGE: Changed default cycle poll interval to 15 seconds
+        poll_interval_seconds: int = 15, 
         location: str = "Accra U.S. Embassy/Consulate"
     ):
         self.telegram_token = telegram_token
@@ -62,6 +55,9 @@ class VisaSlotListener:
         
         # Setup Telegram bot
         self.bot = telegram.Bot(token=telegram_token)
+        
+        # NOTE: New attribute for inner Telegram delays
+        self.telegram_delay_seconds = 5 
 
     def _get_availability_rules(self) -> Dict[int, Dict[int, Set[int]]]:
         """Defines the deterministic availability rules for 2026."""
@@ -84,7 +80,6 @@ class VisaSlotListener:
         while current_date <= self.end_date:
             year, month, day = current_date.year, current_date.month, current_date.day
             
-            # Skip the unavailable period (Dec 2025 to May 2026) in the calculated schedule
             if (year == 2025 and month == 12) or (year == 2026 and month <= 5):
                 current_date += datetime.timedelta(days=1)
                 continue
@@ -120,7 +115,7 @@ class VisaSlotListener:
                     current = current.replace(month=current.month + 1)
                 except ValueError:
                     days_in_month = monthrange(current.year, current.month + 1)[1]
-                    current = current.replace(month=current.month + 1, day=min(current.day, days_in_month))
+                    current = current.replace(month=current.month + 1, day=min(current.day, days_in.month))
         return months
 
 
@@ -129,12 +124,12 @@ class VisaSlotListener:
         try:
             await self.bot.send_message(chat_id=self.telegram_chat_id, text=message, parse_mode='HTML')
         except Exception as e:
-            logging.error(f"Failed to send Telegram message: {e}") # Using logging
+            logging.error(f"Failed to send Telegram message: {e}")
 
     async def _check_month_and_report(self, month_start: datetime.date):
-        """
-        Checks availability for a single month and reports the findings.
-        """
+        # ... (implementation remains the same) ...
+        # [No changes needed in this function aside from the calling logic in run_async]
+        
         year = month_start.year
         month = month_start.month
         month_name = month_start.strftime('%B %Y')
@@ -153,18 +148,15 @@ class VisaSlotListener:
         new_slots_in_month = current_slots_in_month - self.previous_slots 
 
         if is_unavailable_period:
-            # --- TELEGRAM MESSAGE FOR UNAVAILABLE MONTHS ---
             message = f"<b>🔍 Availability Check: {month_name}</b>\n"
             message += f"<b>Location:</b> {self.location}\n"
             message += f"<b>Status:</b> No Appointments Available.\n"
             message += f"<i>Checking again soon...</i>"
             
             await self._send_telegram_message(message)
-            logging.info(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Sent Telegram update for {month_name}: No slots.") # Using logging
-            # --- END TELEGRAM MESSAGE ---
+            logging.info(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Sent Telegram update for {month_name}: No slots.")
 
         elif new_slots_in_month:
-            # Code for available months (June 2026 onwards)
             self.previous_slots.update(current_slots_in_month)
             
             message = f"<b>🎉 NEW VISA SLOTS FOUND! 🎉</b>\n"
@@ -178,37 +170,29 @@ class VisaSlotListener:
             message += "\n🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨"
             
             await self._send_telegram_message(message)
-            logging.info(f"New slots detected and alert sent for {month_name}!") # Using logging
+            logging.info(f"New slots detected and alert sent for {month_name}!")
         
         else:
             self.previous_slots.update(current_slots_in_month)
-            logging.info(f"Checking {month_name}, slots previously found in this cycle.") # Using logging
+            logging.info(f"Checking {month_name}, slots previously found in this cycle.")
 
 
     async def _check_account(self, account: VisaAccount):
-        """
-        Performs the account check: looks for a slot BEFORE the account's target date.
-        """
+        # ... (implementation remains the same) ...
+        # [No changes needed in this function aside from the calling logic in run_async]
         
         try:
-            # --- DATE PARSING ---
             month_year_str = account.target_month_year
             year, month = map(int, month_year_str.split('-'))
-            
-            # Use the earliest possible target date as the reference.
             reference_date = datetime.date(year, month, account.target_day_start)
-            
             target_range_str = f"Before {reference_date.strftime('%Y-%m-%d')}"
-            # --- END DATE PARSING ---
-
         except Exception as e:
-            logging.error(f"[DATA ERROR] Failed to parse date range for account {account.unique_id}: {e}") # Using logging
+            logging.error(f"[DATA ERROR] Failed to parse date range for account {account.unique_id}: {e}")
             return  
 
         name = f"{account.first_name} {account.last_name}".strip()
         uid = account.unique_id
         
-        # Look for ANY slot in the full schedule that is EARLIER than the target date
         earlier_slots_found = {
             slot for slot in self.full_schedule 
             if slot < reference_date
@@ -222,18 +206,16 @@ class VisaSlotListener:
                 f"<b>Target:</b> {target_range_str}\n\n"
                 f"<b>Found Slots:</b>\n"
             )
-            for slot in sorted(list(earlier_slots_found))[:5]: # Show up to 5 slots
+            for slot in sorted(list(earlier_slots_found))[:5]:
                 message += f"  ✅ <b>{slot.strftime('%Y-%m-%d')} ({slot.strftime('%A')})</b>\n"
             
             message += f"\n<b>ACTION REQUIRED:</b> Log in with email <code>{account.email}</code> to reschedule!"
             
             await self._send_telegram_message(message)
-            logging.info(f"EARLIER SLOT FOUND for {name}!") # Using logging
+            logging.info(f"EARLIER SLOT FOUND for {name}!")
 
         else:
-            # Current status: No earlier slot found
-            # Removed the full telegram message to avoid unnecessary spam for every account every cycle
-            logging.info(f"No earlier slot yet for {name} (Searching: {target_range_str})") # Using logging
+            logging.info(f"No earlier slot yet for {name} (Searching: {target_range_str})")
 
 
     async def run_async(self):
@@ -253,16 +235,16 @@ class VisaSlotListener:
             for month_start in self.month_iterator:
                 try:
                     await self._check_month_and_report(month_start)
-                    await asyncio.sleep(1.0) # Small sleep between month checks
+                    # TIMING CHANGE: 5-second break between month checks/updates
+                    await asyncio.sleep(self.telegram_delay_seconds) 
                 except Exception as e:
                     logging.error(f"Error during month check: {e}")
             
             # 2. ACCOUNT CHECK (Using app_context to safely query DB)
             logging.info("--- Running Account Monitor (Earlier Slot Checker) ---")
-            # CRITICAL FIX: The app_context ensures the database connection is available
             with app.app_context():
                 try:
-                    db.session.remove() # Clean up session before query
+                    db.session.remove()
                     accounts = VisaAccount.query.all()
                     
                     if not accounts:
@@ -272,15 +254,17 @@ class VisaSlotListener:
                         for account in accounts:
                             try:
                                 await self._check_account(account)
-                                await asyncio.sleep(1.0) # Small sleep between account checks
+                                # TIMING CHANGE: 5-second break between account checks/updates
+                                await asyncio.sleep(self.telegram_delay_seconds) 
                             except Exception as e:
                                 logging.error(f"Error checking account {account.unique_id}: {e}")
                     
-                    db.session.remove() # Clean up session after query
+                    db.session.remove()
                 except Exception as e:
                     logging.critical(f"CRITICAL ERROR: Failed to query database: {e}")
 
             logging.info(f"--- Full Cycle Complete. Sleeping {self.poll_interval} seconds. ---")
+            # TIMING CHANGE: 15-second break before the next cycle starts
             await asyncio.sleep(self.poll_interval)
             
 # ==================== HOW TO USE ====================
@@ -295,8 +279,8 @@ if __name__ == "__main__":
     listener = VisaSlotListener(
         telegram_token=TELEGRAM_TOKEN,
         telegram_chat_id=int(TELEGRAM_CHAT_ID),
-        # CRITICAL FIX: Set poll interval to 5 minutes (300 seconds)
-        poll_interval_seconds=300, 
+        # TIMING CHANGE: Main loop poll interval set to 15 seconds
+        poll_interval_seconds=15, 
         location="Accra U.S. Embassy/Consulate" 
     )
     
@@ -306,5 +290,3 @@ if __name__ == "__main__":
         logging.info("\nListener stopped by user.")
     except Exception as e:
         logging.fatal(f"Fatal error: {e}")
-
-
