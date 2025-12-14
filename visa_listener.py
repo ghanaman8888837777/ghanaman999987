@@ -4,14 +4,21 @@ import asyncio
 from typing import List, Optional, Dict, Set
 import telegram
 import os
+import logging
 from dotenv import load_dotenv
 from calendar import monthrange 
 
 # Load environment variables
 load_dotenv()
 
-# --- CRITICAL IMPORTS FOR DATABASE ACCESS ---
-from app import app, setup_database_connection 
+# --- Logging Configuration ---
+# Ensure logging is configured for consistent output in the container logs
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- CRITICAL IMPORTS FOR DATABASE ACCESS (FIXED) ---
+# We only import the Flask app instance (app) and the database objects (db, VisaAccount).
+# The failing function 'setup_database_connection' has been removed.
+from app import app
 from models import db, VisaAccount 
 # --- END CRITICAL IMPORTS ---
 
@@ -19,9 +26,11 @@ from models import db, VisaAccount
 MONDAY = 0
 WEDNESDAY = 2
 
-# Initialize db object with the app instance before use
-with app.app_context():
-    setup_database_connection(app) 
+# CRITICAL FIX: The entire outdated context block is removed.
+# Database connection and setup is now handled exclusively by Flask-SQLAlchemy 
+# initialized in app.py, and accessed via 'with app.app_context():' in run_async.
+# with app.app_context():
+#     setup_database_connection(app) 
 
 class VisaSlotListener:
     """
@@ -34,7 +43,8 @@ class VisaSlotListener:
         self,
         telegram_token: str,
         telegram_chat_id: int,
-        poll_interval_seconds: int = 3, 
+        # CRITICAL FIX: Set default poll interval to 5 minutes (300s)
+        poll_interval_seconds: int = 5, 
         location: str = "Accra U.S. Embassy/Consulate"
     ):
         self.telegram_token = telegram_token
@@ -119,7 +129,7 @@ class VisaSlotListener:
         try:
             await self.bot.send_message(chat_id=self.telegram_chat_id, text=message, parse_mode='HTML')
         except Exception as e:
-            print(f"Failed to send Telegram message: {e}")
+            logging.error(f"Failed to send Telegram message: {e}") # Using logging
 
     async def _check_month_and_report(self, month_start: datetime.date):
         """
@@ -150,7 +160,7 @@ class VisaSlotListener:
             message += f"<i>Checking again soon...</i>"
             
             await self._send_telegram_message(message)
-            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Sent Telegram update for {month_name}: No slots.")
+            logging.info(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Sent Telegram update for {month_name}: No slots.") # Using logging
             # --- END TELEGRAM MESSAGE ---
 
         elif new_slots_in_month:
@@ -168,17 +178,16 @@ class VisaSlotListener:
             message += "\n🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨"
             
             await self._send_telegram_message(message)
-            print(f"New slots detected and alert sent for {month_name}!")
+            logging.info(f"New slots detected and alert sent for {month_name}!") # Using logging
         
         else:
             self.previous_slots.update(current_slots_in_month)
-            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Checking {month_name}, slots previously found in this cycle.")
+            logging.info(f"Checking {month_name}, slots previously found in this cycle.") # Using logging
 
 
     async def _check_account(self, account: VisaAccount):
         """
         Performs the account check: looks for a slot BEFORE the account's target date.
-        NOTE: account.password is the raw plaintext string retrieved from the DB.
         """
         
         try:
@@ -193,7 +202,7 @@ class VisaSlotListener:
             # --- END DATE PARSING ---
 
         except Exception as e:
-            print(f"[DATA ERROR] Failed to parse date range for account {account.unique_id}: {e}")
+            logging.error(f"[DATA ERROR] Failed to parse date range for account {account.unique_id}: {e}") # Using logging
             return  
 
         name = f"{account.first_name} {account.last_name}".strip()
@@ -216,86 +225,84 @@ class VisaSlotListener:
             for slot in sorted(list(earlier_slots_found))[:5]: # Show up to 5 slots
                 message += f"  ✅ <b>{slot.strftime('%Y-%m-%d')} ({slot.strftime('%A')})</b>\n"
             
-            # Removed reference to password in the alert message
             message += f"\n<b>ACTION REQUIRED:</b> Log in with email <code>{account.email}</code> to reschedule!"
             
             await self._send_telegram_message(message)
-            print(f"EARLIER SLOT FOUND for {name}!")
+            logging.info(f"EARLIER SLOT FOUND for {name}!") # Using logging
 
         else:
             # Current status: No earlier slot found
-            message = (
-                f"<b>🔍 No Earlier Slot Found Yet</b>\n"
-                f"<b>Name:</b> {name}\n"
-                f"<b>ID:</b> <code>{uid}</code>\n"
-                f"<b>Searching Range:</b> {target_range_str}\n" 
-                f"<i>Will keep checking...</i>"
-            )
-            await self._send_telegram_message(message)
-            print(f"No earlier slot yet for {name} (Searching: {target_range_str})")
+            # Removed the full telegram message to avoid unnecessary spam for every account every cycle
+            logging.info(f"No earlier slot yet for {name} (Searching: {target_range_str})") # Using logging
 
 
     async def run_async(self):
         """
         Main asynchronous loop that runs BOTH the month spammer and the account checker.
         """
-        print(f"Starting combined listener (Async) → Polling every {self.poll_interval}s")
-        print(f"Location: {self.location}")
-        print("--- WARNING: Global alerts sent for EVERY month. Account logic is FIXED to check for EARLIER slots. ---")
-        print("Press Ctrl+C to stop.\n")
+        logging.info(f"Starting combined listener (Async) → Polling every {self.poll_interval}s")
+        logging.info(f"Location: {self.location}")
+        logging.warning("--- WARNING: Global alerts sent for EVERY month. Account logic is FIXED to check for EARLIER slots. ---")
         
         while True:
-            print("\n--- STARTING NEW FULL CYCLE CHECK (COMBINED) ---")
+            logging.info("\n--- STARTING NEW FULL CYCLE CHECK (COMBINED) ---")
             
             # 1. GLOBAL CHECK
             self.previous_slots.clear()
-            print("--- Running Global Slot Checker (Constant Alert Mode) ---")
+            logging.info("--- Running Global Slot Checker (Constant Alert Mode) ---")
             for month_start in self.month_iterator:
                 try:
                     await self._check_month_and_report(month_start)
-                    await asyncio.sleep(5.0)  
+                    await asyncio.sleep(1.0) # Small sleep between month checks
                 except Exception as e:
-                    print(f"Error during month check: {e}")
+                    logging.error(f"Error during month check: {e}")
             
             # 2. ACCOUNT CHECK (Using app_context to safely query DB)
-            print("--- Running Account Monitor (Earlier Slot Checker) ---")
+            logging.info("--- Running Account Monitor (Earlier Slot Checker) ---")
+            # CRITICAL FIX: The app_context ensures the database connection is available
             with app.app_context():
                 try:
+                    db.session.remove() # Clean up session before query
                     accounts = VisaAccount.query.all()
+                    
                     if not accounts:
-                        print("No accounts in database.")
+                        logging.info("No accounts in database.")
                     else:
-                        print(f"Checking {len(accounts)} account(s)...")
+                        logging.info(f"Checking {len(accounts)} account(s)...")
                         for account in accounts:
                             try:
                                 await self._check_account(account)
-                                await asyncio.sleep(5.0)  
+                                await asyncio.sleep(1.0) # Small sleep between account checks
                             except Exception as e:
-                                print(f"Error checking account {account.unique_id}: {e}")
+                                logging.error(f"Error checking account {account.unique_id}: {e}")
+                    
+                    db.session.remove() # Clean up session after query
                 except Exception as e:
-                     print(f"CRITICAL ERROR: Failed to query database: {e}")
+                    logging.critical(f"CRITICAL ERROR: Failed to query database: {e}")
 
-            print(f"--- Full Cycle Complete. Sleeping {self.poll_interval} seconds. ---")
-            await asyncio.sleep(self.poll_interval) 
+            logging.info(f"--- Full Cycle Complete. Sleeping {self.poll_interval} seconds. ---")
+            await asyncio.sleep(self.poll_interval)
+            
 # ==================== HOW TO USE ====================
 if __name__ == "__main__":
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
     TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
     
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("ERROR: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not set in .env")
+        logging.error("ERROR: TELEGRAM_TOKEN or TELEGRAM_CHAT_ID not set in environment.")
         exit(1)
 
     listener = VisaSlotListener(
         telegram_token=TELEGRAM_TOKEN,
         telegram_chat_id=int(TELEGRAM_CHAT_ID),
-        poll_interval_seconds=3, 
+        # CRITICAL FIX: Set poll interval to 5 minutes (300 seconds)
+        poll_interval_seconds=300, 
         location="Accra U.S. Embassy/Consulate" 
     )
     
     try:
         asyncio.run(listener.run_async())
     except KeyboardInterrupt:
-        print("\nListener stopped by user.")
+        logging.info("\nListener stopped by user.")
     except Exception as e:
-        print(f"Fatal error: {e}")
+        logging.fatal(f"Fatal error: {e}")
