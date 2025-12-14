@@ -1,7 +1,7 @@
 import os
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
-from sqlalchemy import Integer, String
+from sqlalchemy import Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 # Removed: cryptography.fernet imports
 from dotenv import load_dotenv
@@ -10,6 +10,11 @@ load_dotenv()
 
 # Initialize the db object without the app instance
 db = SQLAlchemy()
+
+# --- CHANGE NOTE 1: Added 'func' import from sqlalchemy ---
+# The 'func' object is necessary to use func.utcnow() for reliable timestamp generation.
+# from sqlalchemy import Integer, String, func 
+# --------------------------------------------------------
 
 class User(db.Model):
     # This model is kept for consistency but is unused by the application logic
@@ -32,7 +37,15 @@ class VisaAccount(db.Model):
     target_day_start: Mapped[int] = mapped_column(Integer, nullable=False) 
     target_day_end: Mapped[int] = mapped_column(Integer, nullable=True) 
 
-    last_checked: Mapped[datetime] = mapped_column(db.DateTime, default=datetime.utcnow)
+    # --- CHANGE NOTE 2: Corrected the default value for last_checked ---
+    # The previous definition was prone to throwing a Not Null constraint error
+    # because the default function might not have been executed properly 
+    # during object creation. func.utcnow() is the idiomatic SQLAlchemy 
+    # way to set a creation/update timestamp reliably.
+    last_checked: Mapped[datetime] = mapped_column(db.DateTime, 
+                                                 default=func.utcnow(),
+                                                 nullable=False)
+    # ------------------------------------------------------------------
 
     def __repr__(self):
         return f'<VisaAccount {self.unique_id}>'
