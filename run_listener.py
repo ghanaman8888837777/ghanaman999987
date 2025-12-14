@@ -9,8 +9,9 @@ load_dotenv()
 listener = VisaSlotListener(
     telegram_token=os.getenv("TELEGRAM_TOKEN"),
     telegram_chat_id=int(os.getenv("TELEGRAM_CHAT_ID")),
-    poll_interval_seconds=3,
+    poll_interval_seconds=15,
     location="Accra U.S. Embassy/Consulate"
 )
+
 
 asyncio.run(listener.run_async())
