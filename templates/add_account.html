@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Add New Visa Account</h2>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+        <div class="flashes mb-3">
+            {% for category, message in messages %}
+                <div class="alert alert-{{ category }}">{{ message }}</div>
+            {% endfor %}
+        </div>
+    {% endif %}
+{% endwith %}
+
+<form method="POST">
+    {{ form.hidden_tag() }}
+    
+    <div class="mb-3">{{ form.email.label }} {{ form.email(class="form-control") }}</div>
+    <div class="mb-3">{{ form.password.label }} {{ form.password(class="form-control") }}</div>
+    <div class="mb-3">{{ form.unique_id.label }} {{ form.unique_id(class="form-control") }}</div>
+    <div class="mb-3">{{ form.first_name.label }} {{ form.first_name(class="form-control") }}</div>
+    <div class="mb-3">{{ form.last_name.label }} {{ form.last_name(class="form-control") }}</div>
+    <div class="mb-3">{{ form.appointment_type.label }} {{ form.appointment_type(class="form-control") }}</div>
+    
+    <hr>
+    <h4>Target Appointment Date Range</h4>
+    
+    <div class="row">
+        <div class="col-md-5 mb-3">
+            {{ form.target_month_year.label }} 
+            {{ form.target_month_year(class="form-select") }}
+        </div>
+        <div class="col-md-3 mb-3">
+            {{ form.target_day_start.label }} 
+            {{ form.target_day_start(class="form-control", min=1, max=31) }}
+        </div>
+        <div class="col-md-4 mb-3">
+            {{ form.target_day_end.label }} 
+            {{ form.target_day_end(class="form-control", min=1, max=31) }}
+            <small class="form-text text-muted">Leave blank for a single day.</small>
+        </div>
+    </div>
+    
+    <hr>
+    {{ form.submit(class="btn btn-primary") }}
+</form>
+<a href="/dashboard" class="btn btn-secondary mt-3">Back to Dashboard</a>
+
+{% endblock %}
