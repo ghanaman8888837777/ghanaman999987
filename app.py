@@ -6,43 +6,48 @@ from datetime import datetime
 # Load environment variables
 load_dotenv()
 
-# Flask App Setup
+# --- 1. Flask App Creation and Configuration ---
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your_default_secret_key')
 
-# --- DATABASE CONFIGURATION CHANGE ---
-# The default path for SQLite is the instance folder relative to the app.
-# We explicitly set the URI here.
+# Database Configuration (Render will provide the DATABASE_URL)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
-# This is required for SQLite file-based databases:
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False 
 
-# If using SQLite, set the path to the instance folder for the database file
+# If using SQLite locally, ensure instance folder exists (optional for Render)
 if app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite'):
-    # Creates the instance folder if it doesn't exist (required for relative SQLite paths)
     os.makedirs(app.instance_path, exist_ok=True)
-# --- END DATABASE CONFIGURATION CHANGE ---
+# --- END Flask Config ---
 
 # Import database and models after app configuration
 from models import db, VisaAccount 
 from forms import LoginForm, AddAccountForm
 
-# --- DATABASE SETUP ---
-def setup_database_connection(application):
-    """Initializes the db instance with the Flask application."""
-    db.init_app(application)
-# --- END DATABASE SETUP ---
 
-# ... (All routes remain the same) ...
+# --- 2. CRITICAL FIX: Database Initialization ---
+# The db instance must be registered with the app object *before* any
+# database access attempts.
+db.init_app(app)
+# --- END CRITICAL FIX ---
+
+
+# --- ROUTES ---
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
+    # Redirect directly to dashboard as login is disabled
     return redirect(url_for('dashboard'))
-# ... (dashboard, add_account, delete_account routes remain the same) ...
+
+@app.route('/logout')
+def logout():
+    # Performs no action
+    flash('Logout successful (system is publicly accessible).', 'info')
+    return redirect(url_for('dashboard'))
 
 @app.route('/')
 @app.route('/dashboard')
 def dashboard():
+    # The error occurs here because 'db' is not registered when this query runs
     accounts = VisaAccount.query.all()
     return render_template('dashboard.html', accounts=accounts)
 
@@ -92,6 +97,6 @@ def delete_account(account_id):
 if __name__ == '__main__':
     # Initialize DB connection and create tables
     with app.app_context():
-        setup_database_connection(app) 
+        # IMPORTANT: db is already initialized above, so we just create tables
         db.create_all()
     app.run(host='0.0.0.0', port=5000, debug=True)
