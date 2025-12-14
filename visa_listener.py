@@ -44,7 +44,7 @@ class VisaSlotListener:
         telegram_token: str,
         telegram_chat_id: int,
         # CRITICAL FIX: Set default poll interval to 5 minutes (300s)
-        poll_interval_seconds: int = 5, 
+        poll_interval_seconds: int = 15, 
         location: str = "Accra U.S. Embassy/Consulate"
     ):
         self.telegram_token = telegram_token
@@ -306,3 +306,4 @@ if __name__ == "__main__":
         logging.info("\nListener stopped by user.")
     except Exception as e:
         logging.fatal(f"Fatal error: {e}")
+
