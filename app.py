@@ -2,6 +2,8 @@ import os
 from flask import Flask, render_template, redirect, url_for, flash
 from dotenv import load_dotenv
 from datetime import datetime
+from models import db, VisaAccount 
+from forms import LoginForm, AddAccountForm
 
 # Load environment variables
 load_dotenv()
@@ -11,24 +13,32 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your_default_secret_key')
 
 # Database Configuration (Render will provide the DATABASE_URL)
+# CRITICAL: This config must be set before db.init_app(app)
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False 
 
 # If using SQLite locally, ensure instance folder exists (optional for Render)
-if app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite'):
+if app.config['SQLALCHEMY_DATABASE_URI'] and app.config['SQLALCHEMY_DATABASE_URI'].startswith('sqlite'):
     os.makedirs(app.instance_path, exist_ok=True)
 # --- END Flask Config ---
 
-# Import database and models after app configuration
-from models import db, VisaAccount 
-from forms import LoginForm, AddAccountForm
-
 
 # --- 2. CRITICAL FIX: Database Initialization ---
-# The db instance must be registered with the app object *before* any
-# database access attempts.
+# The db instance must be registered with the app object immediately
 db.init_app(app)
 # --- END CRITICAL FIX ---
+
+
+# --- DATABASE INITIALIZATION COMMAND (For Render/Production) ---
+@app.cli.command("init-db")
+def init_db():
+    """Initializes the database by creating all tables."""
+    print("Attempting to initialize database tables...")
+    with app.app_context():
+        # This is safe to run multiple times; it will only create tables if they don't exist
+        db.create_all()
+    print("Database tables created successfully!")
+# --- END CLI Command ---
 
 
 # --- ROUTES ---
@@ -47,7 +57,7 @@ def logout():
 @app.route('/')
 @app.route('/dashboard')
 def dashboard():
-    # The error occurs here because 'db' is not registered when this query runs
+    # Query to display all accounts on the dashboard
     accounts = VisaAccount.query.all()
     return render_template('dashboard.html', accounts=accounts)
 
@@ -59,7 +69,7 @@ def add_account():
             # Password field is saved as PLAIN TEXT
             new_account = VisaAccount(
                 email=form.email.data,
-                password=form.password.data, # Stored as PLAINTEXT
+                password=form.password.data,
                 unique_id=form.unique_id.data,
                 first_name=form.first_name.data,
                 last_name=form.last_name.data,
@@ -95,8 +105,7 @@ def delete_account(account_id):
 
 
 if __name__ == '__main__':
-    # Initialize DB connection and create tables
+    # Initialize DB connection and create tables for LOCAL development only
     with app.app_context():
-        # IMPORTANT: db is already initialized above, so we just create tables
         db.create_all()
     app.run(host='0.0.0.0', port=5000, debug=True)
